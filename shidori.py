@@ -7,8 +7,9 @@ import tkinter
 
 class URL:
     def __init__(self, url):
+        self.user_agent = "Shidori-Browser/1.0"
         self.scheme, url = url.split('://', 1)
-        assert self.scheme in ['http', 'https']
+        assert self.scheme in ['http', 'https', 'file']
         if "/" not in url:
             url = url + "/"
         self.host, url = url.split("/", 1)
@@ -24,37 +25,44 @@ class URL:
 
 
     def request(self):
-        s = socket.socket(
-            family=socket.AF_INET,
-            type=socket.SOCK_STREAM,
-            proto=socket.IPPROTO_TCP,
-        )
-        s.connect((self.host, self.port))
-        if self.scheme == "https":
-            ctx = ssl._create_unverified_context()
+        if self.scheme == "file":
+            with open(self.path, "r") as f:
+                body = f.read()
+                
+        if self.scheme in ["http", "https"]:
+            s = socket.socket(
+                family=socket.AF_INET,
+                type=socket.SOCK_STREAM,
+                proto=socket.IPPROTO_TCP,
+            )
+            s.connect((self.host, self.port))
+            if self.scheme == "https":
+                ctx = ssl._create_unverified_context()
+                s = ctx.wrap_socket(s, server_hostname=self.host)
+            
 
-            s = ctx.wrap_socket(s, server_hostname=self.host)
+            s.send(("GET {} HTTP/1.1\r\n".format(self.path) +
+                    "Host: {}\r\n".format(self.host) +
+                    "Connection: {}\r\n".format("close") +
+                    "User-Agent: {}\r\n\r\n".format(self.user_agent))
+                .encode("utf8"))
 
-        s.send(("GET {} HTTP/1.0\r\n".format(self.path) +
-                "Host: {}\r\n\r\n".format(self.host))
-               .encode("utf8"))
+            response = s.makefile("r", encoding=("utf8"), newline="\r\n")
+            statusline = response.readline()
+            version, status, explanation = statusline.split(" ", 2)
+            response_headers = {}
 
-        response = s.makefile("r", encoding=("utf8"), newline="\r\n")
-        statusline = response.readline()
-        version, status, explanation = statusline.split(" ", 2)
-        response_headers = {}
+            while True:
+                line = response.readline()
+                if line == "\r\n":
+                    break
+                header, value = line.split(":", 1)
+                response_headers[header.casefold()] = value.strip()
 
-        while True:
-            line = response.readline()
-            if line == "\r\n":
-                break
-            header, value = line.split(":", 1)
-            response_headers[header.casefold()] = value.strip()
-
-        assert "transfer-encoding" not in response_headers
-        assert "content-encoding" not in response_headers
-        body = response.read()
-        s.close()
+            assert "transfer-encoding" not in response_headers
+            assert "content-encoding" not in response_headers
+            body = response.read()
+            s.close()
         return body
     
 def lex(body):
